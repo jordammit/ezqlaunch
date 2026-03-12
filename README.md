@@ -3,7 +3,7 @@ Copyright © 2026 iKM Media (Jordan Siegler)
   
 ezQLaunch is a server browser/launcher for QuakeWorld, designed as both a  
 standalone application and a background/service worker for [ezQWTF (ezQuakeWorld](https://github.com/jordammit/qlaunch)  
-[Team Fortress)](https://github.com/jordammit/qlaunch).  
+[Team Fortress)](https://github.com/jordammit/qlaunch) (WIP!!).  
   
 Forked from QLaunch by Cory Nelson.  
 Developed for the QuakeWorld Team Fortress Unification Project.  
@@ -68,4 +68,4 @@ created `release` folder to find the compiled executable.
   
 ## Links
 QLaunch Homepage - https://web.archive.org/web/20041205094956/http://dev.int64.org/qlaunch.html  
-ezQWTF - https://github.com/jordammit/ezqwtf-source/  
+ezQWTF (WIP!!) - https://github.com/jordammit/ezqwtf-source/  
