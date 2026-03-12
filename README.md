@@ -57,6 +57,14 @@ ipaddr2:port
 Just as QLaunch before it, the ezQLaunch source is available freely and licensed under  
 an  MIT License.  Please make sure you understand it well before messing with the  
 included source.  Though not required, I would love to hear from you if you use it.  
+
+## Compiling
+Just as QLaunch before it, ezQLaunch was developed under Microsoft Visual Studio 2003.  
+While not required, it is recommended to use this version for most reliable compilation.  
+
+After opening the `.vcproj` file in Visual Studio .NET 2003, set to Release and choose  
+Build > Build Solution. Move up a directory from the `.vcproj` file and check the newly  
+created `release` folder to find the compiled executable.  
   
 ## Links
 QLaunch Homepage - https://web.archive.org/web/20041205094956/http://dev.int64.org/qlaunch.html  
