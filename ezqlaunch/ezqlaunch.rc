@@ -1,0 +1,237 @@
+// ezqlaunch.rc
+
+#include "resource.h"
+#include <windows.h>
+#include <commctrl.h>
+
+// ---------------------------------------------------------------------------
+// String table
+// ---------------------------------------------------------------------------
+STRINGTABLE
+BEGIN
+    IDS_PLAYER              "Player"
+    IDS_FRAGS               "Frags"
+    IDS_TIME                "Time"
+    IDS_PING                "Ping"
+    IDS_SERVER              "Server"
+    IDS_HOST                "Address"
+    IDS_MAP                 "Map"
+    IDS_PLAYERS             "Players"
+    IDS_STATUS_IDLE         "Ready."
+    IDS_STATUS_QUERYING     "Querying master server..."
+    IDS_STATUS_PINGING      "Pinging servers..."
+    IDS_STATUS_DONE         "Scan complete."
+    IDS_STATUS_LOADING_CACHE "Loading cache..."
+END
+
+// ---------------------------------------------------------------------------
+// IDR_MAINMENU
+// ---------------------------------------------------------------------------
+IDR_MAINMENU MENU
+BEGIN
+    POPUP "&Application"
+    BEGIN
+        MENUITEM "Set &Client...",              IDM_APP_SETCLIENT
+        MENUITEM "Edit &Master Server...",      IDM_APP_SETMASTER
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit",                       IDM_APP_EXIT
+    END
+    POPUP "&Server"
+    BEGIN
+        MENUITEM "&Connect to Server",          IDM_SRV_CONNECT
+        MENUITEM SEPARATOR
+        MENUITEM "&Add to Favorites",           IDM_SRV_FAVORITE
+        MENUITEM "&Refresh Selected",           IDM_SRV_REFRESH_SEL
+        MENUITEM "&Never Ping This Server",     IDM_SRV_NEVERSCAN
+        MENUITEM SEPARATOR
+        MENUITEM "&Full Update",                IDM_SRV_FULLUPDATE
+        MENUITEM "Refresh &All",                IDM_SRV_REFRESHALL
+        MENUITEM SEPARATOR
+        MENUITEM "Manually Add Server to &Favorites...", IDM_SRV_ADDMANUAL
+    END
+    POPUP "&View"
+    BEGIN
+        POPUP "Sort &Servers by"
+        BEGIN
+            MENUITEM "&Name",                   IDM_VIEW_SORT_SRV_NAME
+            MENUITEM "&Address",                IDM_VIEW_SORT_SRV_ADDR
+            MENUITEM "&Map",                    IDM_VIEW_SORT_SRV_MAP
+            MENUITEM "&Players",                IDM_VIEW_SORT_SRV_PLAYERS
+            MENUITEM "P&ing",                   IDM_VIEW_SORT_SRV_PING
+            MENUITEM "&Last Played",            IDM_VIEW_SORT_SRV_LAST
+        END
+        POPUP "Sort P&layers by"
+        BEGIN
+            MENUITEM "&Name",                    IDM_VIEW_SORT_PLR_NAME
+            MENUITEM "&Score",                   IDM_VIEW_SORT_PLR_SCORE
+            MENUITEM "T&ime",                    IDM_VIEW_SORT_PLR_TIME
+            MENUITEM "P&ing",                    IDM_VIEW_SORT_PLR_PING
+            MENUITEM "S&kin/Class",              IDM_VIEW_SORT_PLR_SKIN
+        END
+        MENUITEM SEPARATOR
+        MENUITEM "&Hide Bottom Panes",          IDM_VIEW_HIDE_BOTTOM
+    END
+    POPUP "Fil&ters"
+    BEGIN
+        MENUITEM "&Team Fortress Only",             IDM_FILTER_TF_ONLY
+        MENUITEM "Hide &Empty Servers",             IDM_FILTER_HIDE_EMPTY
+        MENUITEM "Hide &Full Servers",              IDM_FILTER_HIDE_FULL
+        MENUITEM "Hide S&pectator-Only Servers",    IDM_FILTER_HIDE_NOTEMPTY
+        MENUITEM "Hide High-&Ping Servers",         IDM_FILTER_HIDE_HIGHPING
+    END
+    POPUP "&About"
+    BEGIN
+        MENUITEM "&About ezQLaunch...",         IDM_ABOUT
+    END
+END
+
+// ---------------------------------------------------------------------------
+// IDD_MAIN
+// ---------------------------------------------------------------------------
+IDD_MAIN DIALOGEX 0, 0, 640, 320
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
+CAPTION "ezQLaunch"
+MENU IDR_MAINMENU
+FONT 8, "MS Shell Dlg"
+BEGIN
+    PUSHBUTTON  "Full Update",  IDC_BTN_UPDATE_MASTER,   5,  5, 65, 14
+    PUSHBUTTON  "Refresh",      IDC_BTN_REFRESH_CACHE,  75,  5, 50, 14
+    PUSHBUTTON  "Filters...",   IDC_BTN_FILTERS,       130,  5, 50, 14
+    PUSHBUTTON  "Edit Master",  IDC_BTN_ADD_MASTER,    185,  5, 58, 14
+    PUSHBUTTON  "Set Client",   IDC_BTN_ENGINE,        248,  5, 52, 14
+    PUSHBUTTON  "Connect",      IDC_CONNECT,           305,  5, 50, 14
+
+    CONTROL "", IDC_TAB,
+                WC_TABCONTROL,
+                TCS_TABS | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                5, 23, 630, 155
+
+    CONTROL "", IDC_SERVERS,
+                "SysListView32",
+                LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,
+                7, 37, 626, 139
+
+    CONTROL "", IDC_SERVERS_FAV,
+                "SysListView32",
+                LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,
+                7, 37, 626, 139
+
+    CONTROL "", IDC_SERVERS_HIST,
+                "SysListView32",
+                LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,
+                7, 37, 626, 139
+
+    CONTROL "", IDC_SERVERS_NVR,
+                "SysListView32",
+                LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,
+                7, 37, 626, 139
+
+    CONTROL "", IDC_PLAYERS,
+                "SysListView32",
+                LVS_REPORT | LVS_SINGLESEL | WS_BORDER | WS_TABSTOP,
+                5, 182, 295, 120
+
+    CONTROL "", IDC_SPLITTER,
+                "STATIC",
+                SS_OWNERDRAW | WS_CHILD | WS_VISIBLE,
+                302, 182, 4, 120
+
+    CONTROL "", IDC_SRVINFO,
+                "SysListView32",
+                LVS_REPORT | LVS_SINGLESEL | WS_BORDER | WS_TABSTOP,
+                308, 182, 327, 120
+
+    CONTROL "", IDC_PROGRESS,
+                "msctls_progress32",
+                PBS_SMOOTH | WS_CHILD,
+                5, 305, 630, 8
+
+    LTEXT "Ready.", IDC_STATUS_BAR, 5, 311, 630, 8
+END
+
+// ---------------------------------------------------------------------------
+// IDD_ADDMASTER
+// ---------------------------------------------------------------------------
+IDD_ADDMASTER DIALOGEX 0, 0, 240, 80
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Master Server"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    LTEXT    "Hostname:",   -1,              5, 10, 45, 10
+    EDITTEXT IDC_MASTER_HOST,               55,  8, 145, 12, ES_AUTOHSCROLL
+
+    LTEXT    "Port:",       -1,              5, 28, 45, 10
+    EDITTEXT IDC_MASTER_PORT,               55, 26,  50, 12, ES_AUTOHSCROLL | ES_NUMBER
+
+    PUSHBUTTON      "OK",     IDC_MASTER_OK,     145, 55, 40, 14, BS_DEFPUSHBUTTON
+    PUSHBUTTON      "Cancel", IDC_MASTER_CANCEL, 192, 55, 40, 14
+END
+
+// ---------------------------------------------------------------------------
+// IDD_FILTERS
+// ---------------------------------------------------------------------------
+IDD_FILTERS DIALOGEX 0, 0, 220, 190
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Filters"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    GROUPBOX     "Game filter",        -1,              5,   5, 210,  22
+    AUTOCHECKBOX "TF Only (gamedir = fortress)",
+                 IDC_FILTER_TF_ONLY,                   12,  14, 190,  10
+
+    GROUPBOX     "Server visibility",  -1,              5,  32, 210,  95
+
+    AUTOCHECKBOX "Hide empty servers (no players)",
+                 IDC_FILTER_HIDE_EMPTY,                12,  45, 180,  10
+
+    AUTOCHECKBOX "Hide full servers (at max players)",
+                 IDC_FILTER_HIDE_FULL,                 12,  59, 180,  10
+
+    AUTOCHECKBOX "Hide non-empty servers (spectate-only mode)",
+                 IDC_FILTER_HIDE_NOTEMPTY,             12,  73, 195,  10
+
+    AUTOCHECKBOX "Hide high-ping servers  (ping >",
+                 IDC_FILTER_HIDE_HIGHPING,             12,  87, 155,  10
+    EDITTEXT     IDC_FILTER_PING_LIMIT,               168,  85,  35,  12, ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT        "ms)", -1,                           207,  87,  16,  10
+
+    GROUPBOX     "Map filter",  -1,                     5, 132, 210,  40
+    LTEXT        "Map name contains:",  -1,            12, 145,  80,  10
+    EDITTEXT     IDC_FILTER_MAP,                       95, 143, 115,  12, ES_AUTOHSCROLL
+
+    DEFPUSHBUTTON "OK",     IDC_FILTER_OK,            115, 170,  45, 14
+    PUSHBUTTON    "Cancel", IDC_FILTER_CANCEL,        165, 170,  45, 14
+END
+
+// ---------------------------------------------------------------------------
+// IDD_ENGINE  (now "Set Client")
+// ---------------------------------------------------------------------------
+IDD_ENGINE DIALOGEX 0, 0, 320, 80
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Set Client"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    LTEXT    "Client:",     -1,                  5, 10, 40, 10
+    EDITTEXT IDC_ENGINE_PATH,                   50,  8, 220, 12, ES_AUTOHSCROLL
+    PUSHBUTTON "Browse...", IDC_ENGINE_BROWSE,  275,  7,  40, 14
+
+    LTEXT    "Arguments:",  -1,                  5, 28, 40, 10
+    EDITTEXT IDC_ENGINE_ARGS,                   50, 26, 265, 12, ES_AUTOHSCROLL
+
+    DEFPUSHBUTTON "OK",     IDC_ENGINE_OK,      195, 55,  55, 14
+    PUSHBUTTON    "Cancel", IDC_ENGINE_CANCEL,  255, 55,  55, 14
+END
+
+// ---------------------------------------------------------------------------
+// IDD_ADDSERVER  — Manually add a server to Favorites
+// ---------------------------------------------------------------------------
+IDD_ADDSERVER DIALOGEX 0, 0, 220, 62
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Add Server to Favorites"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    LTEXT    "Server address (ip:port):", -1,    5,  10, 105, 10
+    EDITTEXT IDC_ADDSERVER_ADDR,                 5,  22, 205, 12, ES_AUTOHSCROLL
+    DEFPUSHBUTTON "Add",    IDC_ADDSERVER_OK,  110,  42,  50, 14
+    PUSHBUTTON    "Cancel", IDC_ADDSERVER_CANCEL, 165, 42,  50, 14
+END
