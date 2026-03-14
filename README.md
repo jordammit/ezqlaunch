@@ -7,6 +7,8 @@ standalone application and a background/service worker for [ezQWTF (ezQuakeWorld
   
 Forked from QLaunch by Cory Nelson.  
 Developed for the QuakeWorld Team Fortress Unification Project.  
+
+![ ](https://github.com/jordammit/ezqlaunch/blob/main/preview.png?raw=true)
   
 Unlike QLaunch, this fork does NOT use GameStat as it's backend, instead opting for  
 a completely custom solution to query a master server, ping and obtain server/player  
