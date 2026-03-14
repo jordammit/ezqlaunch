@@ -95,11 +95,12 @@ MENU IDR_MAINMENU
 FONT 8, "MS Shell Dlg"
 BEGIN
     PUSHBUTTON  "Full Update",  IDC_BTN_UPDATE_MASTER,   5,  5, 65, 14
-    PUSHBUTTON  "Refresh",      IDC_BTN_REFRESH_CACHE,  75,  5, 50, 14
-    PUSHBUTTON  "Filters...",   IDC_BTN_FILTERS,       130,  5, 50, 14
-    PUSHBUTTON  "Edit Master",  IDC_BTN_ADD_MASTER,    185,  5, 58, 14
-    PUSHBUTTON  "Set Client",   IDC_BTN_ENGINE,        248,  5, 52, 14
-    PUSHBUTTON  "Connect",      IDC_CONNECT,           305,  5, 50, 14
+    PUSHBUTTON  "Refresh All",  IDC_BTN_REFRESH_CACHE,  75,  5, 58, 14
+    PUSHBUTTON  "Auto",         IDC_BTN_AUTO,           136,  5, 14, 14, BS_AUTOCHECKBOX | BS_PUSHLIKE
+    PUSHBUTTON  "Filters...",   IDC_BTN_FILTERS,        155,  5, 50, 14
+    PUSHBUTTON  "*",            IDC_BTN_FAV_SEL,        543,  5, 14, 14
+    PUSHBUTTON  "~",            IDC_BTN_REFRESH_SEL_TB, 560,  5, 14, 14
+    PUSHBUTTON  "Connect",      IDC_CONNECT,            578,  5, 52, 14
 
     CONTROL "", IDC_TAB,
                 WC_TABCONTROL,
@@ -234,4 +235,24 @@ BEGIN
     EDITTEXT IDC_ADDSERVER_ADDR,                 5,  22, 205, 12, ES_AUTOHSCROLL
     DEFPUSHBUTTON "Add",    IDC_ADDSERVER_OK,  110,  42,  50, 14
     PUSHBUTTON    "Cancel", IDC_ADDSERVER_CANCEL, 165, 42,  50, 14
+END
+
+// ---------------------------------------------------------------------------
+// IDD_AUTO  — Auto-scan settings
+// ---------------------------------------------------------------------------
+IDD_AUTO DIALOGEX 0, 0, 220, 90
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Auto-Scan Settings"
+FONT 8, "MS Shell Dlg"
+BEGIN
+    AUTOCHECKBOX "Auto Update every",   IDC_AUTO_UPDATE,        7, 12, 95, 10
+    EDITTEXT     IDC_AUTO_UPDATE_MINS, 106, 10, 28, 12, ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT        "minutes",             -1,                    138, 12, 35, 10
+
+    AUTOCHECKBOX "Auto Refresh every",  IDC_AUTO_REFRESH,       7, 30, 95, 10
+    EDITTEXT     IDC_AUTO_REFRESH_MINS,106, 28, 28, 12, ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT        "minutes",             -1,                    138, 30, 35, 10
+
+    DEFPUSHBUTTON "OK",     IDC_AUTO_OK,     110, 65, 45, 14
+    PUSHBUTTON    "Cancel", IDC_AUTO_CANCEL, 162, 65, 45, 14
 END

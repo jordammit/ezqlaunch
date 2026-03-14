@@ -1,5 +1,5 @@
-﻿/*
-    ezqlaunch - main.c  (rewritten)
+/*
+    qlaunch - main.c  (rewritten)
 
     New features over original:
       - Master server query (Full Update button)
@@ -132,6 +132,21 @@ static BOOL g_hidePanes  = FALSE;      /* Hide bottom panes toggle */
 /* Player sort column (-1 = no sort, matches COL_PLR_* indices) */
 static int  g_plrSortCol = COL_PLR_FRAGS;  /* default: score descending */
 static BOOL g_plrSortAsc = TRUE;
+
+/* Shared server-list column widths — synced across All/Favorites/History/NeverPing tabs.
+   Initialised from defaults; updated whenever the user drags a column divider. */
+#define NUM_SRV_COLS 6
+static int g_srvColWidths[NUM_SRV_COLS] = {240, 140, 90, 65, 50, 140};
+
+/* Address of the server selected before a scan — restored after rebuild */
+static char g_savedSelAddr[22] = "";
+
+/* Auto-scan state */
+#define AUTO_MODE_OFF     0
+#define AUTO_MODE_UPDATE  1   /* periodic Full Update (master + ping) */
+#define AUTO_MODE_REFRESH 2   /* periodic Refresh (re-ping cache only) */
+static int  g_autoMode     = AUTO_MODE_OFF;
+static int  g_autoInterval = 5;   /* minutes between scans */
 
 /* History entries (addr strings loaded from disk) */
 #define MAX_HIST_DISPLAY 128
@@ -434,6 +449,8 @@ static HWND GetActiveServerList(HWND hwnd);
 static int  GetContextSrvIdx(HWND hwnd, int lvIdx);
 static void RefreshSrvInfo(HWND hwnd, int srvIdx);
 static void SortPlayers(HWND hwnd);
+static void UpdateMenuCheckmarks(HWND hwnd);
+static void UpdateSelectionButtons(HWND hwnd, BOOL hasSelection);
 
 /* Refresh players from whichever server is selected on the active tab */
 static void RefreshPlayersFromActiveTab(HWND hwnd) {
@@ -443,8 +460,46 @@ static void RefreshPlayersFromActiveTab(HWND hwnd) {
     RefreshPlayersBySrvIdx(hwnd, srvIdx);
     SortPlayers(hwnd);
     RefreshSrvInfo(hwnd, srvIdx);
-    /* Enable/disable Connect based on valid selection */
-    EnableWindow(GetDlgItem(hwnd, IDC_CONNECT), srvIdx >= 0 ? TRUE : FALSE);
+    /* Enable/disable selection-sensitive buttons */
+    UpdateSelectionButtons(hwnd, srvIdx >= 0);
+}
+
+/* Enable or disable all buttons that require a server to be selected */
+static void UpdateSelectionButtons(HWND hwnd, BOOL hasSelection) {
+    EnableWindow(GetDlgItem(hwnd, IDC_CONNECT),            hasSelection);
+    EnableWindow(GetDlgItem(hwnd, IDC_BTN_FAV_SEL),        hasSelection);
+    EnableWindow(GetDlgItem(hwnd, IDC_BTN_REFRESH_SEL_TB), hasSelection);
+}
+
+/* After a full rebuild, re-select the server whose address was saved in
+   g_savedSelAddr (set in StartScan). No-op if the address is not found. */
+static void RestoreSavedSelection(HWND hwnd) {
+    HWND hList = GetDlgItem(hwnd, IDC_SERVERS);
+    int  i, n;
+    if (g_savedSelAddr[0] == '\0') return;
+    n = ListView_GetItemCount(hList);
+    for (i = 0; i < n; i++) {
+        LVITEM lvi = {0};
+        lvi.mask  = LVIF_PARAM;
+        lvi.iItem = i;
+        ListView_GetItem(hList, &lvi);
+        if ((int)lvi.lParam >= 0 && (int)lvi.lParam < g_serverCount) {
+            if (_stricmp(g_servers[(int)lvi.lParam].addr, g_savedSelAddr) == 0) {
+                ListView_SetItemState(hList, i,
+                    LVIS_SELECTED | LVIS_FOCUSED,
+                    LVIS_SELECTED | LVIS_FOCUSED);
+                ListView_EnsureVisible(hList, i, FALSE);
+                /* Do NOT clear g_savedSelAddr here — the poll timer calls
+                   RebuildServerList every 250ms during a scan, which wipes
+                   the selection each time. Keep the saved addr so each
+                   rebuild re-applies it. It is cleared by the caller once
+                   the scan is fully complete. */
+                return;
+            }
+        }
+    }
+    /* Server not currently visible (filtered/not-yet-pinged) — leave
+       g_savedSelAddr intact so it can be matched once the server appears. */
 }
 
 
@@ -609,7 +664,18 @@ static void StartScan(HWND hwnd, SCAN_MODE mode) {
     }
 
     g_scanning = TRUE;
+
+    /* Save currently selected server address BEFORE clearing g_itemCount,
+       because GetSelectedAddr uses g_itemCount for bounds checking. */
+    g_savedSelAddr[0] = '\0';
+    {
+        char tmp[22];
+        if (GetSelectedAddr(hwnd, tmp, sizeof(tmp)))
+            strncpy(g_savedSelAddr, tmp, sizeof(g_savedSelAddr) - 1);
+    }
+
     g_itemCount = 0;
+
     ListView_DeleteAllItems(GetDlgItem(hwnd, IDC_SERVERS));
     ListView_DeleteAllItems(GetDlgItem(hwnd, IDC_PLAYERS));
     ListView_DeleteAllItems(GetDlgItem(hwnd, IDC_SRVINFO));
@@ -617,6 +683,7 @@ static void StartScan(HWND hwnd, SCAN_MODE mode) {
     EnableWindow(GetDlgItem(hwnd, IDC_BTN_UPDATE_MASTER), FALSE);
     EnableWindow(GetDlgItem(hwnd, IDC_BTN_REFRESH_CACHE), FALSE);
     EnableWindow(GetDlgItem(hwnd, IDC_CONNECT), FALSE);
+    UpdateSelectionButtons(hwnd, FALSE);
 
     {
         HWND hProg = GetDlgItem(hwnd, IDC_PROGRESS);
@@ -715,7 +782,7 @@ static INT_PTR CALLBACK AddMasterDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
                     GetDlgItemTextA(hwnd, IDC_MASTER_PORT, port,  16);
                     if (strlen(host) == 0) {
                         MessageBoxA(hwnd, "Please enter a master server hostname.",
-                                   "ezqlaunch", MB_ICONWARNING);
+                                   "qlaunch", MB_ICONWARNING);
                         return TRUE;
                     }
                     ConfSetOpt(g_conf, "master_host", host);
@@ -978,6 +1045,7 @@ static void SortByColumn(HWND hwnd, int col) {
         }
     }
     g_sorting = FALSE;
+    UpdateMenuCheckmarks(hwnd);
 }
 
 /* -----------------------------------------------------------------------
@@ -1448,6 +1516,15 @@ static void RefreshSelected(HWND hwnd) {
     if (!p) return;
     p->hwndDlg = hwnd;
 
+    /* Save the current selection so WM_APP_SERVERINFO can restore it
+       after RebuildServerList wipes the ListView. */
+    {
+        char tmp[22];
+        g_savedSelAddr[0] = '\0';
+        if (GetSelectedAddr(hwnd, tmp, sizeof(tmp)))
+            strncpy(g_savedSelAddr, tmp, sizeof(g_savedSelAddr) - 1);
+    }
+
     /* Collect all selected items. For normal rows use GetContextSrvIdx;
        for stub rows on the Favorites tab (srvIdx == -1) read the addr
        from the ListView text and add a new g_servers[] entry so the
@@ -1494,16 +1571,40 @@ static void RefreshSelected(HWND hwnd) {
 }
 
 /* Shared column setup for any server ListView (All, Favorites, or History) */
+/* Read column widths from hSrc and apply them to all server ListViews,
+   then save into g_srvColWidths so new tabs pick them up too. */
+static void SyncSrvColWidths(HWND hwnd, HWND hSrc) {
+    int col;
+    HWND lists[4];
+    int  n, i;
+
+    /* Snapshot widths from the source list */
+    for (col = 0; col < NUM_SRV_COLS; col++)
+        g_srvColWidths[col] = ListView_GetColumnWidth(hSrc, col);
+
+    /* Apply to every other server ListView */
+    lists[0] = GetDlgItem(hwnd, IDC_SERVERS);
+    lists[1] = GetDlgItem(hwnd, IDC_SERVERS_FAV);
+    lists[2] = GetDlgItem(hwnd, IDC_SERVERS_HIST);
+    lists[3] = GetDlgItem(hwnd, IDC_SERVERS_NVR);
+    n = 4;
+    for (i = 0; i < n; i++) {
+        if (lists[i] == hSrc) continue;
+        for (col = 0; col < NUM_SRV_COLS; col++)
+            ListView_SetColumnWidth(lists[i], col, g_srvColWidths[col]);
+    }
+}
+
 static void InitServerListViewColumns(HWND hList) {
     LVCOLUMN lvc = {0};
     lvc.mask = LVCF_FMT | LVCF_WIDTH | LVCF_TEXT | LVCF_SUBITEM;
     lvc.fmt  = LVCFMT_LEFT;
-    lvc.iSubItem = COL_SRV_NAME;    lvc.cx = 200; lvc.pszText = "Server";      ListView_InsertColumn(hList, COL_SRV_NAME,    &lvc);
-    lvc.iSubItem = COL_SRV_ADDR;    lvc.cx = 140; lvc.pszText = "Address";     ListView_InsertColumn(hList, COL_SRV_ADDR,    &lvc);
-    lvc.iSubItem = COL_SRV_MAP;     lvc.cx =  90; lvc.pszText = "Map";         ListView_InsertColumn(hList, COL_SRV_MAP,     &lvc);
-    lvc.iSubItem = COL_SRV_PLAYERS; lvc.cx =  65; lvc.pszText = "Players";     ListView_InsertColumn(hList, COL_SRV_PLAYERS, &lvc);
-    lvc.iSubItem = COL_SRV_PING;    lvc.cx =  50; lvc.pszText = "Ping";        ListView_InsertColumn(hList, COL_SRV_PING,    &lvc);
-    lvc.iSubItem = COL_SRV_LAST;    lvc.cx = 110; lvc.pszText = "Last Played"; ListView_InsertColumn(hList, COL_SRV_LAST,    &lvc);
+    lvc.iSubItem = COL_SRV_NAME;    lvc.cx = g_srvColWidths[COL_SRV_NAME];    lvc.pszText = "Server";      ListView_InsertColumn(hList, COL_SRV_NAME,    &lvc);
+    lvc.iSubItem = COL_SRV_ADDR;    lvc.cx = g_srvColWidths[COL_SRV_ADDR];    lvc.pszText = "Address";     ListView_InsertColumn(hList, COL_SRV_ADDR,    &lvc);
+    lvc.iSubItem = COL_SRV_MAP;     lvc.cx = g_srvColWidths[COL_SRV_MAP];     lvc.pszText = "Map";         ListView_InsertColumn(hList, COL_SRV_MAP,     &lvc);
+    lvc.iSubItem = COL_SRV_PLAYERS; lvc.cx = g_srvColWidths[COL_SRV_PLAYERS]; lvc.pszText = "Players";     ListView_InsertColumn(hList, COL_SRV_PLAYERS, &lvc);
+    lvc.iSubItem = COL_SRV_PING;    lvc.cx = g_srvColWidths[COL_SRV_PING];    lvc.pszText = "Ping";        ListView_InsertColumn(hList, COL_SRV_PING,    &lvc);
+    lvc.iSubItem = COL_SRV_LAST;    lvc.cx = g_srvColWidths[COL_SRV_LAST];    lvc.pszText = "Last Played"; ListView_InsertColumn(hList, COL_SRV_LAST,    &lvc);
 }
 
 static void InitServerListView(HWND hwnd) {
@@ -1761,7 +1862,15 @@ static void SortPlayers(HWND hwnd) {
    ----------------------------------------------------------------------- */
 static void UpdateMenuCheckmarks(HWND hwnd) {
     HMENU hMenu = GetMenu(hwnd);
-    HMENU hView, hFilters;
+    HMENU hView, hFilters, hSortSrv, hSortPlr;
+    static const UINT srvSortIDs[6] = {
+        IDM_VIEW_SORT_SRV_NAME, IDM_VIEW_SORT_SRV_ADDR, IDM_VIEW_SORT_SRV_MAP,
+        IDM_VIEW_SORT_SRV_PLAYERS, IDM_VIEW_SORT_SRV_PING, IDM_VIEW_SORT_SRV_LAST
+    };
+    static const UINT plrSortIDs[5] = {
+        IDM_VIEW_SORT_PLR_NAME, IDM_VIEW_SORT_PLR_SCORE, IDM_VIEW_SORT_PLR_TIME,
+        IDM_VIEW_SORT_PLR_PING, IDM_VIEW_SORT_PLR_SKIN
+    };
     if (!hMenu) return;
 
     hFilters = GetSubMenu(hMenu, 3); /* Filters is 4th top-level item (0-based) */
@@ -1782,6 +1891,24 @@ static void UpdateMenuCheckmarks(HWND hwnd) {
     if (hView) {
         CheckMenuItem(hView, IDM_VIEW_HIDE_BOTTOM,
                       g_hidePanes ? MF_CHECKED : MF_UNCHECKED);
+
+        /* Sort Servers submenu — bullet on the active column */
+        hSortSrv = GetSubMenu(hView, 0);
+        if (hSortSrv && g_sortCol >= 0 && g_sortCol < 6) {
+            CheckMenuRadioItem(hSortSrv,
+                IDM_VIEW_SORT_SRV_NAME, IDM_VIEW_SORT_SRV_LAST,
+                srvSortIDs[g_sortCol], MF_BYCOMMAND);
+        }
+
+        /* Sort Players submenu — bullet on the active column.
+           g_plrSortCol uses COL_PLR_* indices; map to menu IDs.
+           COL_PLR_NAME=0, FRAGS=1, TIME=2, PING=3, SKIN=4. */
+        hSortPlr = GetSubMenu(hView, 1);
+        if (hSortPlr && g_plrSortCol >= 0 && g_plrSortCol < 5) {
+            CheckMenuRadioItem(hSortPlr,
+                IDM_VIEW_SORT_PLR_NAME, IDM_VIEW_SORT_PLR_SKIN,
+                plrSortIDs[g_plrSortCol], MF_BYCOMMAND);
+        }
     }
 }
 
@@ -1857,8 +1984,157 @@ static void LoadConfig(HWND hwnd) {
     sv = ConfGetOpt(g_conf, "sort_asc");
     if (sv) g_sortAsc = atoi(sv) ? TRUE : FALSE;
 
+    /* Load auto-scan state */
+    sv = ConfGetOpt(g_conf, "auto_mode");
+    if (sv) g_autoMode = atoi(sv);
+    if (g_autoMode < AUTO_MODE_OFF || g_autoMode > AUTO_MODE_REFRESH)
+        g_autoMode = AUTO_MODE_OFF;
+    sv = ConfGetOpt(g_conf, "auto_interval");
+    if (sv) g_autoInterval = atoi(sv);
+    if (g_autoInterval < 1) g_autoInterval = 1;
+
     Filter_Load(&g_filters, g_conf);
     /* Do NOT call ConfSave here — only save when values actually change */
+}
+
+/* -----------------------------------------------------------------------
+   Auto-scan helpers
+   ----------------------------------------------------------------------- */
+
+/* Reflect g_autoMode in the toolbar button states.
+   The clock button (IDC_BTN_AUTO) stays checked whenever auto is active.
+   The Full Update or Refresh button is also checked to show which mode
+   is running. Both use BS_AUTOCHECKBOX | BS_PUSHLIKE so BM_SETCHECK
+   produces the depressed visual without the button being disabled. */
+static void UpdateAutoButtons(HWND hwnd) {
+    HWND hClock   = GetDlgItem(hwnd, IDC_BTN_AUTO);
+    HWND hUpdate  = GetDlgItem(hwnd, IDC_BTN_UPDATE_MASTER);
+    HWND hRefresh = GetDlgItem(hwnd, IDC_BTN_REFRESH_CACHE);
+
+    SendMessage(hClock,   BM_SETCHECK,
+                g_autoMode != AUTO_MODE_OFF ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessage(hUpdate,  BM_SETCHECK,
+                g_autoMode == AUTO_MODE_UPDATE  ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessage(hRefresh, BM_SETCHECK,
+                g_autoMode == AUTO_MODE_REFRESH ? BST_CHECKED : BST_UNCHECKED, 0);
+}
+
+/* Arm or rearm the IDT_AUTO timer. Call after g_autoMode/g_autoInterval change. */
+static void StartAutoTimer(HWND hwnd) {
+    KillTimer(hwnd, IDT_AUTO);
+    if (g_autoMode != AUTO_MODE_OFF)
+        SetTimer(hwnd, IDT_AUTO, (UINT)(g_autoInterval * 60 * 1000), NULL);
+}
+
+static void StopAutoTimer(HWND hwnd) {
+    KillTimer(hwnd, IDT_AUTO);
+}
+
+/* -----------------------------------------------------------------------
+   Auto-scan dialog proc
+   ----------------------------------------------------------------------- */
+static INT_PTR CALLBACK AutoDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+        case WM_INITDIALOG: {
+            char buf[16];
+
+            /* Initialise checkboxes from current global state */
+            CheckDlgButton(hwnd, IDC_AUTO_UPDATE,
+                           g_autoMode == AUTO_MODE_UPDATE  ? BST_CHECKED : BST_UNCHECKED);
+            CheckDlgButton(hwnd, IDC_AUTO_REFRESH,
+                           g_autoMode == AUTO_MODE_REFRESH ? BST_CHECKED : BST_UNCHECKED);
+
+            /* Populate minute fields with current interval */
+            _snprintf(buf, sizeof(buf)-1, "%d", g_autoInterval);
+            buf[sizeof(buf)-1] = '\0';
+            SetDlgItemTextA(hwnd, IDC_AUTO_UPDATE_MINS,  buf);
+            SetDlgItemTextA(hwnd, IDC_AUTO_REFRESH_MINS, buf);
+
+            /* Grey the minute fields unless their checkbox is checked */
+            EnableWindow(GetDlgItem(hwnd, IDC_AUTO_UPDATE_MINS),
+                         g_autoMode == AUTO_MODE_UPDATE);
+            EnableWindow(GetDlgItem(hwnd, IDC_AUTO_REFRESH_MINS),
+                         g_autoMode == AUTO_MODE_REFRESH);
+            return TRUE;
+        }
+
+        case WM_COMMAND:
+            switch (LOWORD(wParam)) {
+
+                case IDC_AUTO_UPDATE:
+                    /* Checking Update clears Refresh (mutual exclusion) */
+                    if (IsDlgButtonChecked(hwnd, IDC_AUTO_UPDATE) == BST_CHECKED) {
+                        CheckDlgButton(hwnd, IDC_AUTO_REFRESH, BST_UNCHECKED);
+                        EnableWindow(GetDlgItem(hwnd, IDC_AUTO_UPDATE_MINS),  TRUE);
+                        EnableWindow(GetDlgItem(hwnd, IDC_AUTO_REFRESH_MINS), FALSE);
+                    } else {
+                        EnableWindow(GetDlgItem(hwnd, IDC_AUTO_UPDATE_MINS),  FALSE);
+                    }
+                    break;
+
+                case IDC_AUTO_REFRESH:
+                    /* Checking Refresh clears Update (mutual exclusion) */
+                    if (IsDlgButtonChecked(hwnd, IDC_AUTO_REFRESH) == BST_CHECKED) {
+                        CheckDlgButton(hwnd, IDC_AUTO_UPDATE, BST_UNCHECKED);
+                        EnableWindow(GetDlgItem(hwnd, IDC_AUTO_REFRESH_MINS), TRUE);
+                        EnableWindow(GetDlgItem(hwnd, IDC_AUTO_UPDATE_MINS),  FALSE);
+                    } else {
+                        EnableWindow(GetDlgItem(hwnd, IDC_AUTO_REFRESH_MINS), FALSE);
+                    }
+                    break;
+
+                case IDOK:
+                case IDC_AUTO_OK: {
+                    BOOL wantUpdate  = (IsDlgButtonChecked(hwnd, IDC_AUTO_UPDATE)  == BST_CHECKED);
+                    BOOL wantRefresh = (IsDlgButtonChecked(hwnd, IDC_AUTO_REFRESH) == BST_CHECKED);
+                    int  mins = 0;
+                    char buf[16];
+
+                    if (wantUpdate) {
+                        GetDlgItemTextA(hwnd, IDC_AUTO_UPDATE_MINS, buf, sizeof(buf));
+                        mins = atoi(buf);
+                    } else if (wantRefresh) {
+                        GetDlgItemTextA(hwnd, IDC_AUTO_REFRESH_MINS, buf, sizeof(buf));
+                        mins = atoi(buf);
+                    }
+
+                    if ((wantUpdate || wantRefresh) && mins < 1) {
+                        MessageBoxA(hwnd,
+                            "Please enter an interval of at least 1 minute.",
+                            "ezqlaunch", MB_ICONWARNING | MB_OK);
+                        break;
+                    }
+
+                    if (wantUpdate)        g_autoMode = AUTO_MODE_UPDATE;
+                    else if (wantRefresh)  g_autoMode = AUTO_MODE_REFRESH;
+                    else                   g_autoMode = AUTO_MODE_OFF;
+
+                    if (mins > 0) g_autoInterval = mins;
+
+                    /* Persist to config */
+                    {
+                        char modebuf[4], intbuf[12];
+                        _snprintf(modebuf, sizeof(modebuf)-1, "%d", g_autoMode);
+                        _snprintf(intbuf,  sizeof(intbuf)-1,  "%d", g_autoInterval);
+                        modebuf[sizeof(modebuf)-1] = '\0';
+                        intbuf[sizeof(intbuf)-1]   = '\0';
+                        ConfSetOpt(g_conf, "auto_mode",     modebuf);
+                        ConfSetOpt(g_conf, "auto_interval", intbuf);
+                        ConfSave(g_conf, g_configPath);
+                    }
+
+                    EndDialog(hwnd, IDOK);
+                    break;
+                }
+
+                case IDCANCEL:
+                case IDC_AUTO_CANCEL:
+                    EndDialog(hwnd, IDCANCEL);
+                    break;
+            }
+            break;
+    }
+    return FALSE;
 }
 
 /* -----------------------------------------------------------------------
@@ -1912,6 +2188,97 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             /* Progress bar: hidden until scan starts */
             ShowWindow(GetDlgItem(hwnd, IDC_PROGRESS), SW_HIDE);
 
+            /* Give Full Update and Refresh BS_PUSHLIKE so BM_SETCHECK can
+               depress them visually when auto-scan is running. */
+            {
+                HWND hU = GetDlgItem(hwnd, IDC_BTN_UPDATE_MASTER);
+                HWND hR = GetDlgItem(hwnd, IDC_BTN_REFRESH_CACHE);
+                LONG sU = GetWindowLongA(hU, GWL_STYLE);
+                LONG sR = GetWindowLongA(hR, GWL_STYLE);
+                SetWindowLongA(hU, GWL_STYLE,
+                    (sU & ~BS_TYPEMASK) | BS_AUTOCHECKBOX | BS_PUSHLIKE);
+                SetWindowLongA(hR, GWL_STYLE,
+                    (sR & ~BS_TYPEMASK) | BS_AUTOCHECKBOX | BS_PUSHLIKE);
+                SetWindowPos(hU, NULL, 0,0,0,0,
+                    SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_FRAMECHANGED);
+                SetWindowPos(hR, NULL, 0,0,0,0,
+                    SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_FRAMECHANGED);
+            }
+            UpdateAutoButtons(hwnd);
+            StartAutoTimer(hwnd);
+
+            /* Load shell32 icons onto the small toolbar buttons.
+               Shell32 icon indices (these are stable across XP/Vista/7):
+                 #20  = clock/timer  (Auto button)
+                 #44  = star/favourite
+                 #238 = circular arrows / refresh
+               LR_SHARED means Windows owns the handle — no cleanup needed. */
+            {
+                HMODULE hShell = LoadLibraryA("shell32.dll");
+                if (hShell) {
+                    struct { int id; UINT ico; } map[3];
+                    int mi;
+                    map[0].id  = IDC_BTN_AUTO;            map[0].ico = 20;
+                    map[1].id  = IDC_BTN_FAV_SEL;         map[1].ico = 44;
+                    map[2].id  = IDC_BTN_REFRESH_SEL_TB;  map[2].ico = 238;
+                    for (mi = 0; mi < 3; mi++) {
+                        HICON hIco = (HICON)LoadImage(hShell,
+                            MAKEINTRESOURCE(map[mi].ico),
+                            IMAGE_ICON, 14, 14, LR_SHARED);
+                        if (hIco) {
+                            HWND  hB = GetDlgItem(hwnd, map[mi].id);
+                            LONG  st = GetWindowLongA(hB, GWL_STYLE);
+                            SetWindowLongA(hB, GWL_STYLE, st | BS_ICON);
+                            SendMessage(hB, BM_SETIMAGE, IMAGE_ICON, (LPARAM)hIco);
+                            SetWindowPos(hB, NULL, 0,0,0,0,
+                                SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_FRAMECHANGED);
+                        }
+                    }
+                    FreeLibrary(hShell);
+                }
+            }
+
+            /* Selection-sensitive buttons start disabled */
+            UpdateSelectionButtons(hwnd, FALSE);
+
+            /* Create a tooltip control and register all small icon buttons */
+            {
+                HWND hTT;
+                TOOLINFOA ti;
+                struct { int id; char *tip; } tips[5];
+                int ti_i;
+
+                tips[0].id  = IDC_BTN_AUTO;
+                tips[0].tip = "Auto-Scan";
+                tips[1].id  = IDC_BTN_FAV_SEL;
+                tips[1].tip = "Add Server to Favorites";
+                tips[2].id  = IDC_BTN_REFRESH_SEL_TB;
+                tips[2].tip = "Refresh selected server";
+                tips[3].id  = IDC_BTN_UPDATE_MASTER;
+                tips[3].tip = "Full Update: query master server and re-ping all servers";
+                tips[4].id  = IDC_BTN_REFRESH_CACHE;
+                tips[4].tip = "Refresh All: re-ping all cached servers without querying master";
+
+                hTT = CreateWindowExA(WS_EX_TOPMOST, TOOLTIPS_CLASS, NULL,
+                          WS_POPUP | TTS_NOPREFIX | TTS_ALWAYSTIP,
+                          CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                          hwnd, NULL, g_hInst, NULL);
+
+                if (hTT) {
+                    SendMessage(hTT, TTM_SETMAXTIPWIDTH, 0, 300);
+                    memset(&ti, 0, sizeof(ti));
+                    ti.cbSize   = sizeof(TOOLINFOA);
+                    ti.uFlags   = TTF_IDISHWND | TTF_SUBCLASS;
+                    ti.hwnd     = hwnd;
+                    ti.hinst    = g_hInst;
+                    for (ti_i = 0; ti_i < 5; ti_i++) {
+                        ti.uId      = (UINT_PTR)GetDlgItem(hwnd, tips[ti_i].id);
+                        ti.lpszText = tips[ti_i].tip;
+                        SendMessage(hTT, TTM_ADDTOOLA, 0, (LPARAM)&ti);
+                    }
+                }
+            }
+
             UpdateMenuCheckmarks(hwnd);
 
             /* Capture initial client area for resize calculations */
@@ -1940,7 +2307,7 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     if (g_serverCount == 0) {
                         MessageBoxA(hwnd,
                             "No cached servers to refresh.\nUse Full Update to query the master server first.",
-                            "ezqlaunch", MB_ICONINFORMATION);
+                            "qlaunch", MB_ICONINFORMATION);
                         break;
                     }
                     StartScan(hwnd, SCAN_REFRESH_CACHE);
@@ -1992,6 +2359,21 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 case IDM_APP_EXIT:
                     SendMessage(hwnd, WM_CLOSE, 0, 0);
                     break;
+
+                case IDCANCEL: {
+                    /* Escape key: deselect all items on the active server list
+                       rather than closing the window. */
+                    HWND hList = GetActiveServerList(hwnd);
+                    int  i, n  = ListView_GetItemCount(hList);
+                    for (i = 0; i < n; i++)
+                        ListView_SetItemState(hList, i, 0,
+                            LVIS_SELECTED | LVIS_FOCUSED);
+                    ListView_SetSelectionMark(hList, -1);
+                    ListView_DeleteAllItems(GetDlgItem(hwnd, IDC_PLAYERS));
+                    ListView_DeleteAllItems(GetDlgItem(hwnd, IDC_SRVINFO));
+                    UpdateSelectionButtons(hwnd, FALSE);
+                    break;
+                }
 
                 case IDC_CONNECT:
                 case IDM_SRV_CONNECT:
@@ -2081,6 +2463,33 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     SyncNeverTab(hwnd);
                     break;
 
+                case IDC_BTN_FAV_SEL: {
+                    char addr[22];
+                    addr[0] = '\0';
+                    if (GetSelectedAddr(hwnd, addr, sizeof(addr)) && addr[0] != '\0') {
+                        BOOL nowFav = SL_ToggleFavorite(addr);
+                        RebuildFavoritesList(hwnd);
+                        SetStatus(hwnd, nowFav ? "Added to Favorites." : "Removed from Favorites.");
+                    }
+                    break;
+                }
+
+                case IDC_BTN_REFRESH_SEL_TB:
+                    RefreshSelected(hwnd);
+                    break;
+
+                case IDC_BTN_AUTO:
+                    if (DialogBoxParamA(g_hInst, MAKEINTRESOURCEA(IDD_AUTO),
+                                        hwnd, AutoDlgProc, 0) == IDOK) {
+                        UpdateAutoButtons(hwnd);
+                        StartAutoTimer(hwnd);
+                    } else {
+                        /* Cancelled — revert clock button to reflect actual state */
+                        SendMessage(GetDlgItem(hwnd, IDC_BTN_AUTO), BM_SETCHECK,
+                            g_autoMode != AUTO_MODE_OFF ? BST_CHECKED : BST_UNCHECKED, 0);
+                    }
+                    break;
+
                 case IDC_BTN_UPDATE_MASTER:
                 case IDM_SRV_FULLUPDATE:
                     StartScan(hwnd, SCAN_FULL_UPDATE);
@@ -2090,7 +2499,7 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     if (g_serverCount == 0) {
                         MessageBoxA(hwnd,
                             "No cached servers to refresh.\nUse Full Update to query the master server first.",
-                            "ezqlaunch", MB_ICONINFORMATION);
+                            "qlaunch", MB_ICONINFORMATION);
                         break;
                     }
                     StartScan(hwnd, SCAN_REFRESH_CACHE);
@@ -2119,11 +2528,11 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
                 /* ---- View menu — sort players ---- */
                 /* IDM_VIEW_SORT_PLR_TEAM removed — color sort dropped per GameSpy parity */
-                case IDM_VIEW_SORT_PLR_NAME:    g_plrSortCol = COL_PLR_NAME;   SortPlayers(hwnd); break;
-                case IDM_VIEW_SORT_PLR_SCORE:   g_plrSortCol = COL_PLR_FRAGS;  SortPlayers(hwnd); break;
-                case IDM_VIEW_SORT_PLR_TIME:    g_plrSortCol = COL_PLR_TIME;   SortPlayers(hwnd); break;
-                case IDM_VIEW_SORT_PLR_PING:    g_plrSortCol = COL_PLR_PING;   SortPlayers(hwnd); break;
-                case IDM_VIEW_SORT_PLR_SKIN:    g_plrSortCol = COL_PLR_SKIN;   SortPlayers(hwnd); break;
+                case IDM_VIEW_SORT_PLR_NAME:    g_plrSortCol = COL_PLR_NAME;   SortPlayers(hwnd); UpdateMenuCheckmarks(hwnd); break;
+                case IDM_VIEW_SORT_PLR_SCORE:   g_plrSortCol = COL_PLR_FRAGS;  SortPlayers(hwnd); UpdateMenuCheckmarks(hwnd); break;
+                case IDM_VIEW_SORT_PLR_TIME:    g_plrSortCol = COL_PLR_TIME;   SortPlayers(hwnd); UpdateMenuCheckmarks(hwnd); break;
+                case IDM_VIEW_SORT_PLR_PING:    g_plrSortCol = COL_PLR_PING;   SortPlayers(hwnd); UpdateMenuCheckmarks(hwnd); break;
+                case IDM_VIEW_SORT_PLR_SKIN:    g_plrSortCol = COL_PLR_SKIN;   SortPlayers(hwnd); UpdateMenuCheckmarks(hwnd); break;
 
                 /* ---- View menu — hide bottom panes ---- */
                 case IDM_VIEW_HIDE_BOTTOM:
@@ -2183,14 +2592,14 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 /* ---- About ---- */
                 case IDM_ABOUT:
                     MessageBoxA(hwnd,
-                        "ezQLaunch v1.0\r\n"
+                        "ezQLaunch v1.1\r\n"
                         "A QuakeWorld server browser.\r\n\r\n"
                         "Running in: Standalone Mode\r\n\r\n"
                         "Designed for use with ezQWTF Client as a\r\n"
                         "background service.\r\n\r\n"
                         "Forked from QLaunch v1.0 (MIT lic.) created by\r\n"
                         "Cory Nelson, int64.org\r\n\r\n"
-                        "ezQLaunch is created and maintained by\r\n"
+                        "ezQLaunch fork is maintained by\r\n"
                         "Jordan Siegler @ iKM Media, for the\r\n"
                         "QuakeWorld Team Fortress Unification Project.\r\n",
                         "About ezQLaunch",
@@ -2260,9 +2669,24 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 nmh->idFrom == IDC_SERVERS_HIST ||
                 nmh->idFrom == IDC_SERVERS_NVR) {
                 switch (nmh->code) {
-                    case NM_CLICK:
-                        RefreshPlayersFromActiveTab(hwnd);
+                    case NM_CLICK: {
+                        NMITEMACTIVATE *nmia = (NMITEMACTIVATE*)nmh;
+                        if (nmia->iItem == -1) {
+                            /* Click on empty list area — deselect everything */
+                            HWND hList = GetActiveServerList(hwnd);
+                            int  i, n  = ListView_GetItemCount(hList);
+                            for (i = 0; i < n; i++)
+                                ListView_SetItemState(hList, i, 0,
+                                    LVIS_SELECTED | LVIS_FOCUSED);
+                            ListView_SetSelectionMark(hList, -1);
+                            ListView_DeleteAllItems(GetDlgItem(hwnd, IDC_PLAYERS));
+                            ListView_DeleteAllItems(GetDlgItem(hwnd, IDC_SRVINFO));
+                            UpdateSelectionButtons(hwnd, FALSE);
+                        } else {
+                            RefreshPlayersFromActiveTab(hwnd);
+                        }
                         break;
+                    }
                     case NM_DBLCLK:
                         DoConnect(hwnd);
                         break;
@@ -2280,6 +2704,25 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                             !(nmlv->uOldState & LVIS_SELECTED)) {
                             RefreshPlayersFromActiveTab(hwnd);
                         }
+                        break;
+                    }
+                }
+            }
+            /* Header column resize — fired when user finishes dragging a divider
+               or double-clicks it for auto-fit. Sync widths to all server tabs. */
+            else if (nmh->code == HDN_ENDTRACKA    || nmh->code == HDN_ENDTRACKW ||
+                     nmh->code == HDN_DIVIDERDBLCLICKA || nmh->code == HDN_DIVIDERDBLCLICKW) {
+                HWND hLists[4];
+                int  li;
+                hLists[0] = GetDlgItem(hwnd, IDC_SERVERS);
+                hLists[1] = GetDlgItem(hwnd, IDC_SERVERS_FAV);
+                hLists[2] = GetDlgItem(hwnd, IDC_SERVERS_HIST);
+                hLists[3] = GetDlgItem(hwnd, IDC_SERVERS_NVR);
+                for (li = 0; li < 4; li++) {
+                    if (nmh->hwndFrom == ListView_GetHeader(hLists[li])) {
+                        /* Post so the ListView has finished applying the new
+                           width before we read it back */
+                        PostMessage(hwnd, WM_APP + 10, (WPARAM)li, 0);
                         break;
                     }
                 }
@@ -2462,6 +2905,7 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
                 /* Rebuild All list from current g_servers state */
                 RebuildServerList(hwnd);
+                RestoreSavedSelection(hwnd);
                 SL_ReapplyFavorites();
                 RebuildFavoritesList(hwnd);
 
@@ -2480,6 +2924,27 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     SetStatus(hwnd, buf);
                 }
             }
+            /* Auto-scan interval timer — fire a scan when not already scanning */
+            if (wParam == IDT_AUTO && !g_scanning) {
+                if (g_autoMode == AUTO_MODE_UPDATE)
+                    StartScan(hwnd, SCAN_FULL_UPDATE);
+                else if (g_autoMode == AUTO_MODE_REFRESH)
+                    StartScan(hwnd, SCAN_REFRESH_CACHE);
+            }
+            break;
+        }
+
+        /* ----------------------------------------------------------------
+        /* WM_APP+10: deferred column-width sync after HDN_ENDTRACK/DIVIDERDBLCLICK.
+           wParam = index into hLists[] of the source ListView. */
+        case WM_APP + 10: {
+            HWND hLists[4];
+            hLists[0] = GetDlgItem(hwnd, IDC_SERVERS);
+            hLists[1] = GetDlgItem(hwnd, IDC_SERVERS_FAV);
+            hLists[2] = GetDlgItem(hwnd, IDC_SERVERS_HIST);
+            hLists[3] = GetDlgItem(hwnd, IDC_SERVERS_NVR);
+            if ((int)wParam >= 0 && (int)wParam < 4)
+                SyncSrvColWidths(hwnd, hLists[(int)wParam]);
             break;
         }
 
@@ -2513,6 +2978,8 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
             /* Refresh the UI for this one server */
             RebuildServerList(hwnd);
+            RestoreSavedSelection(hwnd);
+            g_savedSelAddr[0] = '\0';
             RebuildFavoritesList(hwnd);
             RefreshPlayersFromActiveTab(hwnd);
             SetStatus(hwnd, "Refresh complete.");
@@ -2538,6 +3005,7 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
             EnableWindow(GetDlgItem(hwnd, IDC_BTN_UPDATE_MASTER), TRUE);
             EnableWindow(GetDlgItem(hwnd, IDC_BTN_REFRESH_CACHE), TRUE);
+            UpdateAutoButtons(hwnd);  /* restore depressed state if auto-scan is active */
 
             /* Final rebuild — gets anything that arrived since last timer tick */
             RebuildServerList(hwnd);
@@ -2566,6 +3034,11 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 buf[63] = '\0';
                 SetStatus(hwnd, buf);
             }
+
+            /* Restore previously selected server if it's still in the list */
+            RestoreSavedSelection(hwnd);
+            g_savedSelAddr[0] = '\0';
+            RefreshPlayersFromActiveTab(hwnd);
             break;
         }
 
@@ -2715,12 +3188,22 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
 
         case WM_MOUSEMOVE: {
+            POINT pt;
+            pt.x = (short)LOWORD(lParam);
+            pt.y = (short)HIWORD(lParam);
             if (g_splDragging) {
-                POINT pt;
-                pt.x = (short)LOWORD(lParam);
-                pt.y = (short)HIWORD(lParam);
                 MoveSplitter(hwnd, pt.x - g_splDragOff);
                 SetCursor(LoadCursor(NULL, IDC_SIZEWE));
+            } else {
+                /* Show resize cursor on hover near splitter even before clicking */
+                HWND hSpl = GetDlgItem(hwnd, IDC_SPLITTER);
+                RECT rcSpl;
+                GetWindowRect(hSpl, &rcSpl);
+                MapWindowPoints(NULL, hwnd, (POINT*)&rcSpl, 2);
+                if (pt.x >= rcSpl.left - 2 && pt.x <= rcSpl.right + 2 &&
+                    pt.y >= rcSpl.top       && pt.y <= rcSpl.bottom) {
+                    SetCursor(LoadCursor(NULL, IDC_SIZEWE));
+                }
             }
             break;
         }
@@ -2747,6 +3230,7 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             if (g_scanning) {
                 StopScan(hwnd);
             }
+            StopAutoTimer(hwnd);
             Filter_Save(&g_filters, g_conf);
             {
                 char buf[16];

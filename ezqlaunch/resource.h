@@ -138,6 +138,19 @@
 #define WM_APP_REFRESH_DONE         (WM_APP + 4)
 
 #define IDT_SCAN_POLL               1001
+#define IDT_AUTO                    1002   /* auto-scan interval timer */
+
+/* Auto-scan dialog */
+#define IDD_AUTO                    310
+#define IDC_BTN_AUTO                1080   /* clock button on main toolbar */
+#define IDC_BTN_FAV_SEL             1087   /* Add selection to Favorites   */
+#define IDC_BTN_REFRESH_SEL_TB      1088   /* Refresh selected server      */
+#define IDC_AUTO_UPDATE             1081   /* "Auto Update" checkbox       */
+#define IDC_AUTO_REFRESH            1082   /* "Auto Refresh" checkbox      */
+#define IDC_AUTO_UPDATE_MINS        1083   /* minutes edit for update      */
+#define IDC_AUTO_REFRESH_MINS       1084   /* minutes edit for refresh     */
+#define IDC_AUTO_OK                 1085
+#define IDC_AUTO_CANCEL             1086
 
 #define PIPE_ARG                    "--pipe"
 
