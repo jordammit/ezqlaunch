@@ -3080,6 +3080,11 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             static const int anchorMoveX[]  = { 0, 0, 0, 0, 0, 0, 0 };
             static const int anchorMoveY[]  = { 0, 0, 0, 0, 0, 1, 1 };
 
+            /* Toolbar buttons pinned to the right edge: move X by dw, fixed size */
+            static const int rightBtnIds[] = {
+                IDC_CONNECT, IDC_BTN_FAV_SEL, IDC_BTN_REFRESH_SEL_TB, 0
+            };
+
             int cw = LOWORD(lParam);
             int ch = HIWORD(lParam);
             int dw, dh, i;
@@ -3091,7 +3096,7 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             dw = cw - g_initW;
             dh = ch - g_initH;
 
-            hdwp = BeginDeferWindowPos(10);
+            hdwp = BeginDeferWindowPos(13);
             if (!hdwp) break;
 
             for (i = 0; anchorIds[i] != 0; i++) {
@@ -3108,6 +3113,21 @@ static INT_PTR CALLBACK DlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 if (anchorMoveY[i])   y += dh;
                 if (anchorRight[i])   w += dw;
                 if (anchorBottom[i])  h += dh;
+                hdwp = DeferWindowPos(hdwp, hCtrl, NULL, x, y, w, h,
+                                      SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+
+            /* Right-pinned buttons: slide horizontally with the window edge */
+            for (i = 0; rightBtnIds[i] != 0; i++) {
+                HWND hCtrl = GetDlgItem(hwnd, rightBtnIds[i]);
+                RECT rc;
+                int  x, y, w, h;
+                GetWindowRect(hCtrl, &rc);
+                MapWindowPoints(NULL, hwnd, (POINT*)&rc, 2);
+                x = rc.left + dw;
+                y = rc.top;
+                w = rc.right  - rc.left;
+                h = rc.bottom - rc.top;
                 hdwp = DeferWindowPos(hdwp, hCtrl, NULL, x, y, w, h,
                                       SWP_NOZORDER | SWP_NOACTIVATE);
             }
